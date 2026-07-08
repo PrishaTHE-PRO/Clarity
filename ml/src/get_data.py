@@ -1,16 +1,15 @@
 """Build a labeled sentence dataset for the "worth reading" classifier.
 
-Strategy (Wikipedia):
-  - The lead/intro section of an article is written to be the most essential,
-    accessible summary  -> label 1 (important + clear).
-  - Body-section prose is supporting detail                -> label 0.
+Two complementary sources, both via the MediaWiki `extracts` API (reliable
+plain text, no fragile HTML scraping):
 
-We use the MediaWiki `extracts` API (not the REST `sections` endpoint, which
-does not return clean plain-text body content):
-  - exintro=1        -> just the lead section
-  - (no exintro)     -> the full article as plain text
-  - body = full text with the lead prefix removed, minus trailing
-    reference/see-also sections.
+Source 1 - Wikipedia (encyclopedic prose)
+  - Lead/intro section  -> label 1 (essential, accessible summary)
+  - Body-section prose  -> label 0 (supporting detail)
+
+Source 2 - Wikinews (inverted-pyramid journalism)
+  - Lede (first sentences) -> label 1 (who/what/when/where, high density)
+  - Later body sentences   -> label 0 (background, quotes, detail)
 
 Output: ml/data/labeled_sentences.csv  with columns: sentence, label, source
 """
@@ -26,14 +25,29 @@ from requests.adapters import HTTPAdapter
 from urllib3.util.retry import Retry
 from nltk.tokenize import sent_tokenize
 
-API = "https://en.wikipedia.org/w/api.php"
+WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
+WIKINEWS_API = "https://en.wikinews.org/w/api.php"
 HEADERS = {"User-Agent": "ClarityDataCollector/1.0 (educational project)"}
+
+# Sections that are lists/metadata, not prose worth learning from.
+STOP_SECTIONS = (
+    "See also", "References", "External links", "Further reading",
+    "Notes", "Bibliography", "Citations", "Sources",
+    "Related news", "Related articles",
+)
+
+# Wikinews articles start with a dateline like "Wednesday, September 1, 2010".
+DATELINE_RE = re.compile(
+    r"^(Monday|Tuesday|Wednesday|Thursday|Friday|Saturday|Sunday), .+\d{4}$"
+)
+
+OUT_PATH = Path(__file__).resolve().parents[1] / "data" / "labeled_sentences.csv"
 
 
 def make_session():
     """A session that retries on rate limits / transient errors with backoff.
 
-    Wikipedia returns HTTP 429 if we hit it too fast; urllib3's Retry honors
+    Wikimedia returns HTTP 429 if we hit it too fast; urllib3's Retry honors
     the Retry-After header and backs off exponentially between attempts.
     """
     s = requests.Session()
@@ -44,30 +58,19 @@ def make_session():
         allowed_methods=("GET",),
         respect_retry_after_header=True,
     )
-    adapter = HTTPAdapter(max_retries=retry)
-    s.mount("https://", adapter)
+    s.mount("https://", HTTPAdapter(max_retries=retry))
     s.headers.update(HEADERS)
     return s
 
 
 SESSION = make_session()
 
-# Sections that are lists/metadata, not prose worth learning from.
-STOP_SECTIONS = (
-    "See also",
-    "References",
-    "External links",
-    "Further reading",
-    "Notes",
-    "Bibliography",
-    "Citations",
-    "Sources",
-)
 
-OUT_PATH = Path(__file__).resolve().parents[1] / "data" / "labeled_sentences.csv"
+# --------------------------------------------------------------------------
+# Shared helpers
+# --------------------------------------------------------------------------
 
-
-def fetch_extract(title, intro_only):
+def fetch_extract(api, title, intro_only):
     """Return the plain-text extract for an article (intro only, or full)."""
     params = {
         "action": "query",
@@ -79,7 +82,7 @@ def fetch_extract(title, intro_only):
     }
     if intro_only:
         params["exintro"] = 1
-    r = SESSION.get(API, params=params, timeout=30)
+    r = SESSION.get(api, params=params, timeout=30)
     r.raise_for_status()
     pages = r.json().get("query", {}).get("pages", {})
     if not pages:
@@ -89,11 +92,7 @@ def fetch_extract(title, intro_only):
 
 
 def strip_reference_sections(text):
-    """Cut everything from the first reference/see-also heading onward.
-
-    With explaintext, section headings appear on their own line as plain text,
-    so we look for a stop-section title alone on a line.
-    """
+    """Cut everything from the first reference/see-also heading onward."""
     lines = text.splitlines()
     for i, line in enumerate(lines):
         if line.strip() in STOP_SECTIONS:
@@ -112,36 +111,34 @@ def is_good_sentence(s):
         return False
     if s.startswith(("=", "*", "•", "-")):
         return False
-    # Drop lines that are mostly a heading (Title Case, no verb-ish content).
     if s.isupper():
         return False
     return True
 
 
 def split_sentences(text):
-    # Collapse the newline-delimited paragraph structure before tokenizing.
+    """Collapse paragraph structure, tokenize, and keep good sentences."""
     text = re.sub(r"\s*\n\s*", " ", text).strip()
     return [s.strip() for s in sent_tokenize(text) if is_good_sentence(s)]
 
 
-def collect_article(title):
-    """Return (lead_sentences, body_sentences) for one article."""
-    intro = fetch_extract(title, intro_only=True)
-    full = fetch_extract(title, intro_only=False)
+# --------------------------------------------------------------------------
+# Source 1: Wikipedia (lead vs body)
+# --------------------------------------------------------------------------
+
+def collect_wikipedia_article(title):
+    """Return (lead_sentences, body_sentences) for one Wikipedia article."""
+    intro = fetch_extract(WIKIPEDIA_API, title, intro_only=True)
+    full = fetch_extract(WIKIPEDIA_API, title, intro_only=False)
     if not intro or not full:
         return [], []
 
-    # Body = full text with the leading intro removed.
     body = full[len(intro):] if full.startswith(intro) else full
     body = strip_reference_sections(body)
-
-    lead_sentences = split_sentences(intro)
-    body_sentences = split_sentences(body)
-    return lead_sentences, body_sentences
+    return split_sentences(intro), split_sentences(body)
 
 
-# ~120 diverse topics across science, tech, history, arts, society, geography.
-topics = [
+WIKIPEDIA_TOPICS = [
     "Machine_learning", "Climate_change", "Python_(programming_language)",
     "World_War_II", "Photosynthesis", "Democracy", "Black_hole",
     "Artificial_intelligence", "Evolution", "Quantum_mechanics",
@@ -157,11 +154,10 @@ topics = [
     "Big_Bang", "Constitution_of_the_United_States", "Beethoven",
     "Rainforest", "Semiconductor", "Ecology", "Magnetism",
     "Roman_Empire", "Vincent_van_Gogh", "Inflation", "Glacier",
-    "Virus", "Telescope", "Democracy_in_ancient_Greece", "Buddhism",
-    "Enzyme", "Tectonic_plate", "Albert_Einstein", "Stock_market",
-    "Ocean_current", "Cell_(biology)", "Printing_press", "Opera",
-    "Thermodynamics", "Amazon_rainforest", "Federalism", "Earthquake",
-    "Isaac_Newton", "Photosynthetic", "Gross_domestic_product",
+    "Virus", "Telescope", "Buddhism", "Enzyme", "Albert_Einstein",
+    "Stock_market", "Ocean_current", "Cell_(biology)", "Printing_press",
+    "Opera", "Thermodynamics", "Amazon_rainforest", "Federalism",
+    "Earthquake", "Isaac_Newton", "Gross_domestic_product",
     "Antarctica", "Metabolism", "Radio", "Gothic_architecture",
     "Capitalism", "Tsunami", "Charles_Darwin", "Electron",
     "Monetary_policy", "Sahara", "Protein", "Vaccination",
@@ -176,42 +172,113 @@ topics = [
 ]
 
 
+def collect_wikipedia(rows, seen):
+    for i, title in enumerate(WIKIPEDIA_TOPICS, 1):
+        try:
+            lead, body = collect_wikipedia_article(title)
+        except requests.RequestException as e:
+            print(f"[wiki {i}/{len(WIKIPEDIA_TOPICS)}] {title}: failed ({e})")
+            continue
+        if not lead:
+            print(f"[wiki {i}/{len(WIKIPEDIA_TOPICS)}] {title}: no lead, skip")
+            continue
+
+        # Balance per article: cap body to the lead count, sampled.
+        if len(body) > len(lead):
+            body = random.sample(body, len(lead))
+        added = _add(rows, seen, lead, 1, "wikipedia") + \
+            _add(rows, seen, body, 0, "wikipedia")
+        print(f"[wiki {i}/{len(WIKIPEDIA_TOPICS)}] {title}: +{added}")
+        time.sleep(0.5)
+
+
+# --------------------------------------------------------------------------
+# Source 2: Wikinews (lede vs body)
+# --------------------------------------------------------------------------
+
+LEDE_SENTENCES = 2  # first N sentences of a news article count as the lede
+
+
+def clean_wikinews(text):
+    """Drop datelines, image refs, and blank lines from a Wikinews extract."""
+    kept = []
+    for line in text.splitlines():
+        s = line.strip()
+        if not s:
+            continue
+        if DATELINE_RE.match(s):
+            continue
+        if s.startswith("File:") or s.startswith("Image:"):
+            continue
+        kept.append(s)
+    return strip_reference_sections("\n".join(kept))
+
+
+def random_wikinews_titles(n):
+    """Fetch up to n random Wikinews article titles (main namespace)."""
+    titles = []
+    while len(titles) < n:
+        batch = min(50, n - len(titles))
+        r = SESSION.get(WIKINEWS_API, params={
+            "action": "query", "format": "json", "list": "random",
+            "rnnamespace": 0, "rnlimit": batch,
+        }, timeout=30)
+        r.raise_for_status()
+        titles.extend(p["title"] for p in r.json()["query"]["random"])
+        time.sleep(0.3)
+    # De-duplicate (random can repeat) while preserving order.
+    return list(dict.fromkeys(titles))
+
+
+def collect_wikinews(rows, seen, n_articles):
+    try:
+        titles = random_wikinews_titles(n_articles)
+    except requests.RequestException as e:
+        print(f"[news] could not list articles: {e}")
+        return
+
+    for i, title in enumerate(titles, 1):
+        try:
+            raw = fetch_extract(WIKINEWS_API, title, intro_only=False)
+        except requests.RequestException as e:
+            print(f"[news {i}/{len(titles)}] {title}: failed ({e})")
+            continue
+
+        sents = split_sentences(clean_wikinews(raw))
+        if len(sents) < LEDE_SENTENCES + 1:
+            continue
+
+        lede = sents[:LEDE_SENTENCES]
+        body = sents[LEDE_SENTENCES:]
+        if len(body) > len(lede):
+            body = random.sample(body, len(lede))
+        added = _add(rows, seen, lede, 1, "wikinews") + \
+            _add(rows, seen, body, 0, "wikinews")
+        print(f"[news {i}/{len(titles)}] {title[:50]}: +{added}")
+        time.sleep(0.4)
+
+
+# --------------------------------------------------------------------------
+
+def _add(rows, seen, sentences, label, source):
+    added = 0
+    for s in sentences:
+        if s not in seen:
+            seen.add(s)
+            rows.append((s, label, source))
+            added += 1
+    return added
+
+
 def main():
-    rows = []  # (sentence, label, source)
+    rows = []
     seen = set()
 
-    for i, title in enumerate(topics, 1):
-        try:
-            lead, body = collect_article(title)
-        except requests.RequestException as e:
-            print(f"[{i}/{len(topics)}] {title}: request failed ({e})")
-            continue
+    print("=== Source 1: Wikipedia ===")
+    collect_wikipedia(rows, seen)
 
-        if not lead:
-            print(f"[{i}/{len(topics)}] {title}: no lead content, skipping")
-            continue
-
-        # Balance: cap body sentences to the number of lead sentences so the
-        # two classes stay roughly even. Sample to avoid front-loading.
-        cap = len(lead)
-        if len(body) > cap:
-            body = random.sample(body, cap)
-
-        added = 0
-        for s in lead:
-            if s not in seen:
-                seen.add(s)
-                rows.append((s, 1, "wikipedia"))
-                added += 1
-        for s in body:
-            if s not in seen:
-                seen.add(s)
-                rows.append((s, 0, "wikipedia"))
-                added += 1
-
-        print(f"[{i}/{len(topics)}] {title}: +{added} "
-              f"(lead={len(lead)}, body={len(body)})")
-        time.sleep(0.5)  # be polite to the API
+    print("\n=== Source 2: Wikinews ===")
+    collect_wikinews(rows, seen, n_articles=400)
 
     random.shuffle(rows)
 
@@ -222,10 +289,13 @@ def main():
         w.writerows(rows)
 
     n_pos = sum(1 for r in rows if r[1] == 1)
-    n_neg = len(rows) - n_pos
+    by_src = {}
+    for _, label, src in rows:
+        by_src.setdefault(src, [0, 0])[label] += 1
     print(f"\nWrote {len(rows)} sentences to {OUT_PATH}")
-    print(f"  label 1 (lead):  {n_pos}")
-    print(f"  label 0 (body):  {n_neg}")
+    print(f"  label 1: {n_pos}   label 0: {len(rows) - n_pos}")
+    for src, (neg, pos) in by_src.items():
+        print(f"  {src}: {pos} pos / {neg} neg")
 
 
 if __name__ == "__main__":

@@ -24,13 +24,25 @@ CLAIM_WORDS = {
     "first", "most", "key", "main", "primary", "significant",
 }
 
+# Penn Treebank POS tag prefixes we care about.
+PROPER_NOUN_TAGS = {"NNP", "NNPS"}          # named entities -> specificity
+VERB_TAGS = {"VB", "VBD", "VBG", "VBN", "VBP", "VBZ"}  # active claims
+NUMBER_TAG = "CD"                            # cardinal numbers -> specifics
+
 
 def extract_features(sentence: str) -> dict:
     """
     Turn a sentence into a vector of numbers the model can learn from.
     Returns None for sentences too short to be meaningful.
+
+    NOTE: features are content-only (computed from the sentence in isolation).
+    We deliberately do NOT include sentence position: the training labels are
+    derived from position (lead/lede vs body), so a position feature would leak
+    the label and inflate accuracy without learning about the text itself.
     """
-    words = [w for w in nltk.word_tokenize(sentence) if w.isalpha()]
+    tokens = nltk.word_tokenize(sentence)
+    tagged = nltk.pos_tag(tokens)
+    words = [w for w in tokens if w.isalpha()]
 
     if len(words) < 3:
         return None
@@ -41,8 +53,13 @@ def extract_features(sentence: str) -> dict:
     rare_ratio = sum(1 for w in words if w.lower() not in COMMON_WORDS) / n
     claim_ratio = sum(1 for w in words if w.lower() in CLAIM_WORDS) / n
 
-    # Numbers = signals of specificity and importance.
+    # POS-based content signals (ratios over alphabetic word count).
+    proper_noun_ratio = sum(1 for _, t in tagged if t in PROPER_NOUN_TAGS) / n
+    verb_ratio = sum(1 for _, t in tagged if t in VERB_TAGS) / n
+
+    # Numeric specificity: both a flag and a count of number tokens.
     has_number = int(bool(re.search(r"\d", sentence)))
+    number_count = sum(1 for _, t in tagged if t == NUMBER_TAG)
 
     word_count = n
 
@@ -56,6 +73,9 @@ def extract_features(sentence: str) -> dict:
         "avg_syllables": avg_syllables,
         "rare_word_ratio": rare_ratio,
         "claim_ratio": claim_ratio,
+        "proper_noun_ratio": proper_noun_ratio,
+        "verb_ratio": verb_ratio,
         "has_number": has_number,
+        "number_count": number_count,
         "length_score": length_score,
     }
