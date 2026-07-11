@@ -26,6 +26,7 @@ from urllib3.util.retry import Retry
 from nltk.tokenize import sent_tokenize
 
 WIKIPEDIA_API = "https://en.wikipedia.org/w/api.php"
+SIMPLE_API = "https://simple.wikipedia.org/w/api.php"
 WIKINEWS_API = "https://en.wikinews.org/w/api.php"
 HEADERS = {"User-Agent": "ClarityDataCollector/1.0 (educational project)"}
 
@@ -169,6 +170,20 @@ WIKIPEDIA_TOPICS = [
     "Interest_rate", "Mount_Everest", "Chromosome", "Television",
     "Roman_Republic", "Fresco", "Communism", "Drought",
     "Leonardo_da_Vinci", "Molecule", "Reforestation",
+    # More common topics for the Simple-vs-Regular dataset (more volume).
+    "Water", "Fire", "Sun", "Moon", "Earth", "Ocean", "Mountain", "River",
+    "Tree", "Forest", "Desert", "Island", "Lake", "Wind", "Rain", "Snow",
+    "Dog", "Cat", "Horse", "Bird", "Fish", "Insect", "Spider", "Whale",
+    "Elephant", "Lion", "Tiger", "Bear", "Wolf", "Shark", "Dinosaur",
+    "Heart", "Lung", "Kidney", "Liver", "Blood", "Bone", "Muscle", "Skin",
+    "Music", "Painting", "Sculpture", "Dance", "Poetry", "Film", "Theatre",
+    "Football", "Basketball", "Tennis", "Cricket", "Chess", "Olympic_Games",
+    "Computer", "Software", "Smartphone", "Robot", "Electric_car",
+    "Airplane", "Ship", "Train", "Bicycle", "Rocket", "Satellite",
+    "Language", "Alphabet", "Number", "Mathematics", "Geometry", "Algebra",
+    "History", "Geography", "Economy", "Government", "Law", "Religion",
+    "Sound", "Light", "Heat", "Color", "Energy", "Force", "Motion",
+    "Star", "Planet", "Comet", "Asteroid", "Moon_landing", "Space_station",
 ]
 
 
@@ -260,6 +275,53 @@ def collect_wikinews(rows, seen, n_articles):
 
 # --------------------------------------------------------------------------
 
+# --------------------------------------------------------------------------
+# Source 3 (primary): Simple English lead vs Regular English body
+#
+# Captures BOTH axes of "worth reading":
+#   positive = Simple English Wikipedia lead   -> clear AND essential
+#   negative = Regular English Wikipedia body  -> complex AND peripheral
+# Labeled by wiki variant + section, so it is not a pure position proxy.
+# --------------------------------------------------------------------------
+
+def collect_simple_vs_regular(rows, seen):
+    """Pure CLARITY signal: Simple English (clear) vs Regular English (complex).
+
+      positive (1): Simple English sentences (lead + body) -> clearly written
+      negative (0): Regular English sentences (lead + body) -> complex
+
+    Using both lead and body from each variant removes the position confound:
+    the label depends ONLY on writing style, not where the sentence sits. The
+    result is a focused "is this written clearly?" model. Importance (is this
+    worth reading, not just readable?) is handled separately by a rule layer in
+    score.py / the extension.
+    """
+    topics = WIKIPEDIA_TOPICS
+    for i, title in enumerate(topics, 1):
+        try:
+            simple_full = fetch_extract(SIMPLE_API, title, intro_only=False)
+            reg_full = fetch_extract(WIKIPEDIA_API, title, intro_only=False)
+        except requests.RequestException as e:
+            print(f"[{i}/{len(topics)}] {title}: failed ({e})")
+            continue
+
+        simple_sents = split_sentences(strip_reference_sections(simple_full))
+        reg_sents = split_sentences(strip_reference_sections(reg_full))
+        if not simple_sents or not reg_sents:
+            print(f"[{i}/{len(topics)}] {title}: missing on one wiki, skip")
+            continue
+
+        # Balance per topic (Regular articles are much longer than Simple).
+        k = min(len(simple_sents), len(reg_sents))
+        pos = simple_sents[:k]
+        neg = random.sample(reg_sents, k) if len(reg_sents) > k else reg_sents
+
+        added = _add(rows, seen, pos, 1, "simple") + \
+            _add(rows, seen, neg, 0, "regular")
+        print(f"[{i}/{len(topics)}] {title}: +{added} (each={k})")
+        time.sleep(0.5)
+
+
 def _add(rows, seen, sentences, label, source):
     added = 0
     for s in sentences:
@@ -274,11 +336,8 @@ def main():
     rows = []
     seen = set()
 
-    print("=== Source 1: Wikipedia ===")
-    collect_wikipedia(rows, seen)
-
-    print("\n=== Source 2: Wikinews ===")
-    collect_wikinews(rows, seen, n_articles=400)
+    print("=== Simple English (clear) vs Regular English (complex) ===")
+    collect_simple_vs_regular(rows, seen)
 
     random.shuffle(rows)
 
