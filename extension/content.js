@@ -195,21 +195,53 @@ function collectTextNodes(root) {
   return nodes;
 }
 
+const ABBREVIATIONS = new Set([
+  "mr", "mrs", "ms", "dr", "prof", "sr", "jr", "st", "vs", "etc", "eg", "ie",
+  "inc", "ltd", "corp", "co", "no", "vol", "fig", "gen", "sen", "rep", "gov",
+  "jan", "feb", "mar", "apr", "jun", "jul", "aug", "sep", "sept", "oct",
+  "nov", "dec", "approx", "al",
+]);
+
+// Is the punctuation run [punctStart, punctEnd) a real sentence end, or part of
+// an abbreviation ("A.I.", "U.S.", "Dr.") or a decimal number ("3.5")?
+function isRealBoundary(text, punctStart, punctEnd) {
+  if (/\d/.test(text[punctStart - 1] || "") && /\d/.test(text[punctEnd] || ""))
+    return false; // decimal number
+  let j = punctStart - 1;
+  let word = "";
+  while (j >= 0 && /[A-Za-z]/.test(text[j])) {
+    word = text[j] + word;
+    j -= 1;
+  }
+  if (word.length === 1) return false; // single initial: A.  I.  U.
+  if (ABBREVIATIONS.has(word.toLowerCase())) return false;
+  return true;
+}
+
 // Split text into segments, preserving EVERY character (gaps included) so we
-// can rebuild the node without losing whitespace or punctuation.
+// can rebuild the node without losing whitespace or punctuation. A segment is
+// either a whole sentence (isSentence:true) or the whitespace between them.
 function toSegments(text) {
   const segments = [];
-  const re = /[^.!?]+[.!?]+/g;
-  let last = 0;
+  const re = /[.!?]+/g;
+  let cursor = 0;
   let m;
   while ((m = re.exec(text))) {
-    if (m.index > last)
-      segments.push({ text: text.slice(last, m.index), isSentence: false });
-    segments.push({ text: m[0], isSentence: true });
-    last = re.lastIndex;
+    const punctEnd = m.index + m[0].length;
+    const nextChar = text[punctEnd];
+    if (nextChar && !/\s/.test(nextChar)) continue; // not a sentence end
+    if (!isRealBoundary(text, m.index, punctEnd)) continue; // abbrev / decimal
+    segments.push({ text: text.slice(cursor, punctEnd), isSentence: true });
+    const ws = /^\s+/.exec(text.slice(punctEnd));
+    if (ws) {
+      segments.push({ text: ws[0], isSentence: false });
+      cursor = punctEnd + ws[0].length;
+    } else {
+      cursor = punctEnd;
+    }
   }
-  if (last < text.length)
-    segments.push({ text: text.slice(last), isSentence: false });
+  if (cursor < text.length)
+    segments.push({ text: text.slice(cursor), isSentence: false });
   return segments;
 }
 
