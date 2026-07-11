@@ -15,10 +15,20 @@ const MAX_SENTENCES = 1200; // safety cap for very long pages
 
 // Highlight the top fraction of sentences by combined importance x clarity.
 // Tune to taste: lower SELECT_RATIO = fewer, more selective highlights.
-const SELECT_RATIO = 0.15;
-const MIN_HIGHLIGHTS = 2;
-const MAX_HIGHLIGHTS = 20;
-const RELATIVE_FLOOR = 0.4; // drop chosen sentences weaker than 40% of the best
+const SELECT_RATIO = 0.3;
+const MIN_HIGHLIGHTS = 3;
+const MAX_HIGHLIGHTS = 30;
+const RELATIVE_FLOOR = 0.3; // drop chosen sentences weaker than 30% of the best
+
+// Definitional sentences ("X is a process...", "Y refers to...") explain what
+// things are, so they carry a lot of understanding — boost them.
+const DEFINITION_BOOST = 1.6;
+const DEFINITION_RE =
+  /\b(is|are|was|were)\s+(a|an|the|one of|any|kind of|type of|form of|the process|a process|a type|a form|a kind|a set|a way|a method|a system|a group|a term)\b|\b(refers? to|defined as|is defined|are defined|means that|is known as|are known as|is called|are called|also called|also known as|consists? of|is the study)\b/i;
+
+function isDefinition(sentence) {
+  return DEFINITION_RE.test(sentence);
+}
 
 // ---------------------------------------------------------------------------
 // Feature extraction — mirror of ml/src/features.py
@@ -174,7 +184,7 @@ function collectTextNodes(root) {
       if (parent.closest(".clarity-highlight")) return NodeFilter.FILTER_REJECT;
       if (!parent.closest(BLOCK_SELECTOR)) return NodeFilter.FILTER_REJECT;
       if (isExcluded(parent, root)) return NodeFilter.FILTER_REJECT;
-      if (!node.nodeValue || node.nodeValue.trim().length < 40)
+      if (!node.nodeValue || node.nodeValue.trim().length < 30)
         return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
@@ -290,6 +300,7 @@ async function run() {
     const substantive = countContentWords(it.sentence) >= MIN_CONTENT_WORDS;
     let combined = sal * (0.5 + 0.5 * clarity);
     if (!substantive) combined *= FILLER_PENALTY;
+    if (isDefinition(it.sentence)) combined *= DEFINITION_BOOST;
     it.combined = combined;
     if (combined > maxCombined) maxCombined = combined;
   });
