@@ -2,27 +2,26 @@
 
 The ONNX/scikit model answers only "is this written clearly?" (the fuzzy,
 perceptual part ML is good at). Importance is a crisp logical property, so we
-handle it with a small transparent rule layer here. The extension mirrors this
-exact logic in JavaScript.
+handle it with a small transparent rule layer. This is the reference for the
+JavaScript version in the extension — keep the two in lock-step.
 
 Definition:
-  worth_reading = clarity_prob  IF the sentence is substantive
-                  clarity_prob * FILLER_PENALTY  otherwise
+  worth_reading = clarity_prob            IF the sentence is substantive
+                  clarity_prob * PENALTY  otherwise
 
-A sentence is "substantive" when it is long enough AND carries at least one
-mark of real content: a named entity, a number, or a claim/argument word.
-Trivial filler ("he did the stuff and it was fine") has none of these, so it
-gets penalized even though it is perfectly clear.
+"Substantive" = the sentence names enough concrete things. We approximate that
+with a portable rule (no POS tagger, so JS can match it): count words that are
+neither function words (the, is, and, ...) nor vague words (thing, stuff, ...).
+Trivial filler like "he did the stuff and it was fine" has almost none.
 """
 
 import json
 import pickle
 from pathlib import Path
 
-import nltk
 import pandas as pd
 
-from features import extract_features
+from features import extract_features, tokenize
 
 MODEL_DIR = Path(__file__).resolve().parents[1] / "model"
 
@@ -32,31 +31,38 @@ with open(MODEL_DIR / "feature_names.json") as f:
     _FEATURES = json.load(f)
 
 # Importance-gate tunables.
-MIN_CONTENT_WORDS = 3  # a substantive sentence names a few concrete things
-FILLER_PENALTY = 0.35  # how hard to down-weight clear-but-empty sentences
+MIN_CONTENT_WORDS = 3
+FILLER_PENALTY = 0.35
 
-# POS tags that carry real content (nouns, adjectives, numbers).
-CONTENT_TAGS = {"NN", "NNS", "NNP", "NNPS", "JJ", "JJR", "JJS", "CD"}
-# Words that are grammatically content but semantically empty -> filler tells.
+# Function words carry grammar, not content. (Kept in sync with content.js.)
+STOPWORDS = {
+    "the", "a", "an", "and", "or", "but", "if", "then", "so", "of", "to",
+    "in", "on", "at", "by", "for", "with", "from", "as", "into", "onto",
+    "is", "are", "was", "were", "be", "been", "being", "am", "do", "does",
+    "did", "have", "has", "had", "will", "would", "shall", "should", "can",
+    "could", "may", "might", "must", "i", "you", "he", "she", "it", "we",
+    "they", "me", "him", "her", "us", "them", "my", "your", "his", "its",
+    "our", "their", "this", "that", "these", "those", "who", "whom", "which",
+    "what", "there", "here", "when", "where", "why", "how", "not", "no",
+    "yes", "very", "just", "also", "too", "more", "most", "some", "any",
+    "all", "each", "than", "about", "up", "down", "out", "off", "over",
+    "again", "once", "get", "got", "go", "went", "make", "made", "said",
+}
+
+# Words that are grammatically content but semantically empty.
 VAGUE_WORDS = {
     "thing", "things", "stuff", "someone", "something", "anything",
     "everything", "nothing", "somewhere", "anywhere", "somehow", "way",
     "ways", "bit", "lot", "lots", "kind", "sort", "one", "ones", "okay",
-    "fine", "some", "part", "point", "time", "times",
+    "fine", "part", "point", "time", "times", "day", "days",
 }
 
 
 def count_content_words(sentence: str) -> int:
-    """Count concrete content words (nouns/adjectives/numbers, minus vague ones).
-
-    This is the importance signal: 'vaccines/immune/system/virus' has several
-    concrete content words; 'he did the stuff and it was fine' has almost none
-    (mostly pronouns and vague words), which is exactly what filler looks like.
-    """
-    tagged = nltk.pos_tag(nltk.word_tokenize(sentence))
+    """Concrete content words = tokens that are neither stopwords nor vague."""
     return sum(
-        1 for w, t in tagged
-        if t in CONTENT_TAGS and w.lower() not in VAGUE_WORDS and len(w) > 2
+        1 for w in tokenize(sentence)
+        if len(w) > 2 and w not in STOPWORDS and w not in VAGUE_WORDS
     )
 
 

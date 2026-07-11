@@ -1,1 +1,1 @@
-["word_count", "avg_word_len", "avg_syllables", "rare_word_ratio", "claim_ratio", "proper_noun_ratio", "verb_ratio", "has_number", "number_count", "length_score"]
+["word_count", "avg_word_len", "avg_syllables", "rare_word_ratio", "length_score"]
