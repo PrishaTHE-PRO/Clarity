@@ -9,12 +9,16 @@
 const MODEL_URL = chrome.runtime.getURL("model/clarity_model.onnx");
 const FEATURE_NAMES_URL = chrome.runtime.getURL("model/feature_names.json");
 
-// Highlight a sentence when its final "worth reading" score clears this bar.
-// Tune to taste: higher = fewer, more selective highlights.
-const THRESHOLD = 0.5;
 const MIN_CONTENT_WORDS = 3;
 const FILLER_PENALTY = 0.35;
 const MAX_SENTENCES = 1200; // safety cap for very long pages
+
+// Highlight the top fraction of sentences by combined importance x clarity.
+// Tune to taste: lower SELECT_RATIO = fewer, more selective highlights.
+const SELECT_RATIO = 0.15;
+const MIN_HIGHLIGHTS = 2;
+const MAX_HIGHLIGHTS = 20;
+const RELATIVE_FLOOR = 0.4; // drop chosen sentences weaker than 40% of the best
 
 // ---------------------------------------------------------------------------
 // Feature extraction — mirror of ml/src/features.py
@@ -83,10 +87,29 @@ const VAGUE_WORDS = new Set([
   "fine", "part", "point", "time", "times", "day", "days",
 ]);
 
-function countContentWords(sentence) {
+function contentTokens(sentence) {
   return tokenize(sentence).filter(
     (w) => w.length > 2 && !STOPWORDS.has(w) && !VAGUE_WORDS.has(w)
-  ).length;
+  );
+}
+
+function countContentWords(sentence) {
+  return contentTokens(sentence).length;
+}
+
+// Importance signal: how many of the article's central terms a sentence
+// carries. `df` = document frequency of each content word across all
+// sentences, so words that recur through the article (its themes) weigh more.
+function salienceRaw(sentence, df) {
+  const cw = contentTokens(sentence);
+  if (cw.length === 0) return 0;
+  let sum = 0;
+  for (const w of cw) {
+    const recurrence = df.get(w) || 1; // central to the article?
+    const rarity = CLARITY_COMMON_WORDS.has(w) ? 1 : 1.5; // distinctive term?
+    sum += recurrence * rarity;
+  }
+  return sum / Math.sqrt(cw.length); // length-normalize
 }
 
 // ---------------------------------------------------------------------------
@@ -244,15 +267,45 @@ async function run() {
   const probsTensor = output.probabilities || output[Object.keys(output).pop()];
   const probs = probsTensor.data; // flat [n*2]: [p0,p1, p0,p1, ...]
 
-  // Pass 3: apply the importance gate and record which sentences to highlight.
+  // Pass 2b: document-level salience — importance needs the whole article,
+  // not one sentence in isolation.
+  const df = new Map();
+  for (const it of items) {
+    for (const w of new Set(contentTokens(it.sentence))) {
+      df.set(w, (df.get(w) || 0) + 1);
+    }
+  }
+  let maxSalience = 0;
+  for (const it of items) {
+    it.salience = salienceRaw(it.sentence, df);
+    if (it.salience > maxSalience) maxSalience = it.salience;
+  }
+
+  // Pass 3: combined = importance (salience) modulated by clarity, with
+  // clear-but-empty filler penalized.
+  let maxCombined = 0;
   items.forEach((it, i) => {
     const clarity = probs[i * 2 + 1];
+    const sal = maxSalience > 0 ? it.salience / maxSalience : 0;
     const substantive = countContentWords(it.sentence) >= MIN_CONTENT_WORDS;
-    const score = substantive ? clarity : clarity * FILLER_PENALTY;
-    if (score >= THRESHOLD) {
-      nodePlans[it.planIndex].highlight[it.segIndex] = score;
-    }
+    let combined = sal * (0.5 + 0.5 * clarity);
+    if (!substantive) combined *= FILLER_PENALTY;
+    it.combined = combined;
+    if (combined > maxCombined) maxCombined = combined;
   });
+
+  // Pass 3b: highlight the top fraction of sentences by combined score.
+  const ranked = [...items].sort((a, b) => b.combined - a.combined);
+  const k = Math.min(
+    items.length,
+    Math.max(MIN_HIGHLIGHTS, Math.round(SELECT_RATIO * items.length)),
+    MAX_HIGHLIGHTS
+  );
+  const floor = RELATIVE_FLOOR * maxCombined;
+  for (const it of ranked.slice(0, k)) {
+    if (it.combined < floor) continue;
+    nodePlans[it.planIndex].highlight[it.segIndex] = it.combined;
+  }
 
   // Pass 4: rebuild only the nodes that got highlights (DOM-safe, no innerHTML).
   for (const plan of nodePlans) {
