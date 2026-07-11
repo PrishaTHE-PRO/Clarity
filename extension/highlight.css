@@ -1,14 +1,14 @@
 .clarity-highlight {
-  background: linear-gradient(120deg, #fefce8 0%, #fdf6c4 100%);
+  background-color: #fff5b0;
   border-radius: 2px;
   padding: 1px 0;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  transition: background 0.2s ease;
+  transition: background-color 0.2s ease;
 }
 
 .clarity-highlight:hover {
-  background: linear-gradient(120deg, #fdf6c4 0%, #fcef9c 100%);
+  background-color: #ffec85;
 }
 
 .clarity-highlight:hover::after {
@@ -22,11 +22,10 @@
 
 @media (prefers-color-scheme: dark) {
   .clarity-highlight {
-    background: linear-gradient(120deg, #78561a 0%, #a16207 100%);
-    color: #fef9c3;
+    background-color: rgba(253, 224, 71, 0.22);
   }
   .clarity-highlight:hover {
-    background: linear-gradient(120deg, #a16207 0%, #ca8a04 100%);
+    background-color: rgba(253, 224, 71, 0.38);
   }
   .clarity-highlight:hover::after {
     color: #fde68a;
