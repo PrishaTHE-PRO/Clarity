@@ -1,5 +1,5 @@
 .clarity-highlight {
-  background: linear-gradient(120deg, #fef9c3 0%, #fef08a 100%);
+  background: linear-gradient(120deg, #fefce8 0%, #fdf6c4 100%);
   border-radius: 2px;
   padding: 1px 0;
   box-decoration-break: clone;
@@ -8,7 +8,7 @@
 }
 
 .clarity-highlight:hover {
-  background: linear-gradient(120deg, #fef08a 0%, #fde047 100%);
+  background: linear-gradient(120deg, #fdf6c4 0%, #fcef9c 100%);
 }
 
 .clarity-highlight:hover::after {

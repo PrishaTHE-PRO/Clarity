@@ -97,18 +97,61 @@ const SKIP_TAGS = new Set([
   "SCRIPT", "STYLE", "NOSCRIPT", "CODE", "PRE", "TEXTAREA", "INPUT",
   "BUTTON", "SELECT", "OPTION", "KBD", "SAMP",
 ]);
-const PROSE_SELECTOR =
-  "p, li, article, main, section, blockquote, h1, h2, h3, dd, td";
 
-function collectTextNodes() {
-  const walker = document.createTreeWalker(document.body, NodeFilter.SHOW_TEXT, {
+// Text must live inside one of these paragraph-like blocks to be considered.
+const BLOCK_SELECTOR = "p, blockquote, h1, h2, h3, li, dd";
+
+// Prefer the real article container; fall back to <body> if none exists.
+const CONTENT_ROOT_SELECTOR = 'article, main, [role="main"]';
+
+// Regions that are never article prose (chrome, promos, boilerplate).
+const EXCLUDE_SELECTOR =
+  'nav, aside, header, footer, form, figure, figcaption,' +
+  '[role="navigation"], [role="complementary"], [role="banner"],' +
+  '[role="contentinfo"], [aria-hidden="true"]';
+
+// Class/id fragments that flag non-article widgets (subscribe boxes, ads,
+// newsletters, related-links, share bars, captions, etc.).
+const EXCLUDE_PATTERN =
+  /subscri|promo|paywall|advert|newsletter|banner|footer|header|\bnav\b|menu|sidebar|related|recirc|market|upsell|signup|sign-up|social|share|comment|caption|byline|masthead|dock|ribbon|widget|cookie/i;
+
+// The largest article/main region on the page (by text length).
+function getContentRoot() {
+  let best = null;
+  let bestLen = 0;
+  for (const el of document.querySelectorAll(CONTENT_ROOT_SELECTOR)) {
+    const len = (el.textContent || "").length;
+    if (len > bestLen) {
+      best = el;
+      bestLen = len;
+    }
+  }
+  return best || document.body;
+}
+
+// Walk ancestors up to the root; reject if any is a non-article region.
+function isExcluded(el, root) {
+  let node = el;
+  while (node && node !== root && node !== document.documentElement) {
+    if (node.matches && node.matches(EXCLUDE_SELECTOR)) return true;
+    const cls = node.getAttribute && node.getAttribute("class");
+    if (cls && EXCLUDE_PATTERN.test(cls)) return true;
+    if (node.id && EXCLUDE_PATTERN.test(node.id)) return true;
+    node = node.parentElement;
+  }
+  return false;
+}
+
+function collectTextNodes(root) {
+  const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       const parent = node.parentElement;
       if (!parent) return NodeFilter.FILTER_REJECT;
       if (SKIP_TAGS.has(parent.tagName)) return NodeFilter.FILTER_REJECT;
       if (parent.closest(".clarity-highlight")) return NodeFilter.FILTER_REJECT;
-      if (!parent.closest(PROSE_SELECTOR)) return NodeFilter.FILTER_REJECT;
-      if (!node.nodeValue || node.nodeValue.trim().length < 20)
+      if (!parent.closest(BLOCK_SELECTOR)) return NodeFilter.FILTER_REJECT;
+      if (isExcluded(parent, root)) return NodeFilter.FILTER_REJECT;
+      if (!node.nodeValue || node.nodeValue.trim().length < 40)
         return NodeFilter.FILTER_REJECT;
       return NodeFilter.FILTER_ACCEPT;
     },
@@ -162,7 +205,8 @@ async function run() {
   const featureNames = await fetch(FEATURE_NAMES_URL).then((r) => r.json());
 
   // Pass 1: gather every candidate sentence and its features.
-  const nodes = collectTextNodes();
+  const root = getContentRoot();
+  const nodes = collectTextNodes(root);
   const nodePlans = []; // { node, segments, highlight }
   const items = []; // { planIndex, segIndex, features, sentence }
 
