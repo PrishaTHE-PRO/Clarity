@@ -216,3 +216,6 @@ __marimo__/
 
 # Streamlit
 .streamlit/secrets.toml
+
+# Extension runtime (re-download with the curl commands in README if needed)
+# Committed so the unpacked extension runs out of the box.

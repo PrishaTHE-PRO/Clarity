@@ -1,0 +1,34 @@
+.clarity-highlight {
+  background: linear-gradient(120deg, #fef9c3 0%, #fef08a 100%);
+  border-radius: 2px;
+  padding: 1px 0;
+  box-decoration-break: clone;
+  -webkit-box-decoration-break: clone;
+  transition: background 0.2s ease;
+}
+
+.clarity-highlight:hover {
+  background: linear-gradient(120deg, #fef08a 0%, #fde047 100%);
+}
+
+.clarity-highlight:hover::after {
+  content: "★ " attr(data-score);
+  font-size: 11px;
+  color: #92400e;
+  margin-left: 6px;
+  opacity: 0.7;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+}
+
+@media (prefers-color-scheme: dark) {
+  .clarity-highlight {
+    background: linear-gradient(120deg, #78561a 0%, #a16207 100%);
+    color: #fef9c3;
+  }
+  .clarity-highlight:hover {
+    background: linear-gradient(120deg, #a16207 0%, #ca8a04 100%);
+  }
+  .clarity-highlight:hover::after {
+    color: #fde68a;
+  }
+}

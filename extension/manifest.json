@@ -1,0 +1,24 @@
+{
+  "manifest_version": 3,
+  "name": "Clarity",
+  "version": "1.0",
+  "description": "Highlights the most worth-reading sentences on any page.",
+  "permissions": ["activeTab"],
+  "action": {
+    "default_popup": "popup.html"
+  },
+  "content_scripts": [
+    {
+      "matches": ["<all_urls>"],
+      "js": ["src/ort.min.js", "src/common_words.js", "content.js"],
+      "css": ["highlight.css"],
+      "run_at": "document_idle"
+    }
+  ],
+  "web_accessible_resources": [
+    {
+      "resources": ["model/*", "src/*.wasm"],
+      "matches": ["<all_urls>"]
+    }
+  ]
+}
