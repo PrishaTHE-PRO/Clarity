@@ -68,3 +68,39 @@ with open(MODEL_DIR / "model.pkl", "wb") as f:
     pickle.dump(model, f)
 
 print(f"\nSaved feature_names.json and model.pkl to {MODEL_DIR}")
+
+# ---------------------------------------------------------------------------
+# Learning curve: train vs. validation accuracy as tree depth grows.
+# This makes overfitting *visible* — train accuracy climbs toward 1.0 while
+# validation accuracy peaks then plateaus/drops. (min_samples_leaf is left
+# unset here so deep trees can fully memorize the training set.)
+# ---------------------------------------------------------------------------
+import matplotlib
+matplotlib.use("Agg")  # headless: save to file, don't open a window
+import matplotlib.pyplot as plt
+
+depths = [2, 4, 6, 8, 10, 15, 20]
+train_scores = []
+val_scores = []
+for depth in depths:
+    m = RandomForestClassifier(n_estimators=100, max_depth=depth, random_state=42)
+    m.fit(X_train, y_train)
+    train_scores.append(m.score(X_train, y_train))
+    val_scores.append(m.score(X_val, y_val))
+
+plt.figure(figsize=(8, 5))
+plt.plot(depths, train_scores, label="Train accuracy", marker="o")
+plt.plot(depths, val_scores, label="Validation accuracy", marker="o")
+plt.xlabel("max_depth")
+plt.ylabel("Accuracy")
+plt.title("Overfitting curve — train vs. validation accuracy")
+plt.legend()
+plt.grid(True, alpha=0.3)
+curve_path = MODEL_DIR / "overfitting_curve.png"
+plt.savefig(curve_path, dpi=150, bbox_inches="tight")
+plt.close()
+
+best_i = max(range(len(depths)), key=lambda i: val_scores[i])
+print(f"Saved learning curve to {curve_path}")
+print(f"  best val accuracy {val_scores[best_i]:.3f} at max_depth={depths[best_i]}; "
+      f"deepest gap {train_scores[-1] - val_scores[-1]:+.3f} at max_depth={depths[-1]}")
