@@ -13,12 +13,46 @@ const MIN_CONTENT_WORDS = 3;
 const FILLER_PENALTY = 0.35;
 const MAX_SENTENCES = 1200; // safety cap for very long pages
 
-// Highlight the top fraction of sentences by combined importance x clarity.
-// Tune to taste: lower SELECT_RATIO = fewer, more selective highlights.
-const SELECT_RATIO = 0.3;
+// Default reading density. Users can change this live from the in-page panel.
+const DEFAULT_READ_RATIO = 0.4;
 const MIN_HIGHLIGHTS = 3;
 const MAX_HIGHLIGHTS = 30;
 const RELATIVE_FLOOR = 0.3; // drop chosen sentences weaker than 30% of the best
+
+const CLARITY_MODES = {
+  essentials: {
+    label: "Essentials",
+    accent: "#2563eb",
+    hint: "Core claims",
+  },
+  facts: {
+    label: "Facts",
+    accent: "#0f766e",
+    hint: "Numbers and names",
+  },
+  arguments: {
+    label: "Arguments",
+    accent: "#7c3aed",
+    hint: "Why and how",
+  },
+  definitions: {
+    label: "Definitions",
+    accent: "#c2410c",
+    hint: "Terms explained",
+  },
+  actions: {
+    label: "Actions",
+    accent: "#15803d",
+    hint: "Advice and next steps",
+  },
+};
+
+const FACT_RE =
+  /\b\d+([.,]\d+)?%?\b|\b(study|report|survey|data|evidence|research|found|showed|according|percent|million|billion|year|years)\b/i;
+const ARGUMENT_RE =
+  /\b(because|therefore|however|although|but|while|whereas|suggests|implies|means that|as a result|in contrast|consequently|so that)\b/i;
+const ACTION_RE =
+  /\b(should|need to|must|try|use|avoid|consider|remember|practice|prepare|ask|make sure|recommend|tip|advice|next|step|steps)\b/i;
 
 // Definitional sentences ("X is a process...", "Y refers to...") explain what
 // things are, so they carry a lot of understanding — boost them.
@@ -246,6 +280,238 @@ function toSegments(text) {
 }
 
 // ---------------------------------------------------------------------------
+// Reading assistant UI
+// ---------------------------------------------------------------------------
+
+function modeScore(sentence, mode, baseScore) {
+  let multiplier = 1;
+  if (mode === "facts") multiplier = FACT_RE.test(sentence) ? 1.75 : 0.65;
+  if (mode === "arguments")
+    multiplier = ARGUMENT_RE.test(sentence) ? 1.7 : 0.75;
+  if (mode === "definitions")
+    multiplier = isDefinition(sentence) ? 2.1 : 0.45;
+  if (mode === "actions") multiplier = ACTION_RE.test(sentence) ? 1.85 : 0.6;
+  return baseScore * multiplier;
+}
+
+function queryScore(sentence, queryTokens) {
+  if (queryTokens.length === 0) return 1;
+  const sentenceTokens = new Set(contentTokens(sentence));
+  const matches = queryTokens.filter((token) => sentenceTokens.has(token)).length;
+  return matches === 0 ? 0.28 : 1 + matches / Math.sqrt(queryTokens.length);
+}
+
+function topSentenceIds(items, state) {
+  const queryTokens = contentTokens(state.query);
+  const ranked = items
+    .map((it) => ({
+      id: it.id,
+      score:
+        modeScore(it.sentence, state.mode, it.combined) *
+        queryScore(it.sentence, queryTokens),
+      combined: it.combined,
+    }))
+    .sort((a, b) => b.score - a.score || b.combined - a.combined);
+
+  const k = Math.min(
+    items.length,
+    Math.max(MIN_HIGHLIGHTS, Math.round(state.ratio * items.length)),
+    MAX_HIGHLIGHTS
+  );
+  const best = ranked[0]?.score || 0;
+  const floor = state.query.trim() ? 0 : RELATIVE_FLOOR * best;
+  return new Set(
+    ranked.slice(0, k).filter((it) => it.score >= floor).map((it) => it.id)
+  );
+}
+
+function findRelatedIds(items, item, limit = 4) {
+  const tokens = new Set(contentTokens(item.sentence));
+  if (tokens.size === 0) return [];
+  return items
+    .filter((candidate) => candidate.id !== item.id)
+    .map((candidate) => {
+      const overlap = contentTokens(candidate.sentence).filter((token) =>
+        tokens.has(token)
+      ).length;
+      return { id: candidate.id, overlap, combined: candidate.combined };
+    })
+    .filter((candidate) => candidate.overlap > 0)
+    .sort((a, b) => b.overlap - a.overlap || b.combined - a.combined)
+    .slice(0, limit)
+    .map((candidate) => candidate.id);
+}
+
+function createAssistant(items) {
+  const state = {
+    ratio: DEFAULT_READ_RATIO,
+    mode: "essentials",
+    query: "",
+  };
+  const itemById = new Map(items.map((it) => [it.id, it]));
+  const sentenceEls = new Map();
+  const minimapMarks = new Map();
+
+  for (const el of document.querySelectorAll(".clarity-sentence")) {
+    sentenceEls.set(Number(el.dataset.clarityId), el);
+  }
+
+  const panel = document.createElement("section");
+  panel.className = "clarity-panel";
+  panel.setAttribute("aria-label", "Clarity reading assistant");
+  panel.innerHTML = `
+    <div class="clarity-panel__header">
+      <div>
+        <div class="clarity-panel__title">Clarity</div>
+        <div class="clarity-panel__subtitle">Intelligent reading assistance</div>
+      </div>
+      <button class="clarity-panel__toggle" type="button" aria-label="Collapse Clarity panel">&times;</button>
+    </div>
+    <label class="clarity-control">
+      <span>Read <strong class="clarity-density-value">40%</strong></span>
+      <input class="clarity-density" type="range" min="20" max="80" step="20" value="40" />
+    </label>
+    <div class="clarity-modes" role="tablist" aria-label="Highlight mode"></div>
+    <label class="clarity-query">
+      <span>Find</span>
+      <input type="search" placeholder="interview tips, limitations..." />
+    </label>
+    <div class="clarity-count" aria-live="polite"></div>
+  `;
+
+  const rail = document.createElement("button");
+  rail.className = "clarity-rail";
+  rail.type = "button";
+  rail.setAttribute("aria-label", "Open Clarity panel");
+  rail.textContent = "Clarity";
+
+  const minimap = document.createElement("div");
+  minimap.className = "clarity-minimap";
+  minimap.setAttribute("aria-hidden", "true");
+
+  document.body.append(panel, rail, minimap);
+
+  const modes = panel.querySelector(".clarity-modes");
+  for (const [key, config] of Object.entries(CLARITY_MODES)) {
+    const button = document.createElement("button");
+    button.className = "clarity-mode";
+    button.type = "button";
+    button.dataset.mode = key;
+    button.setAttribute("role", "tab");
+    button.innerHTML = `<span>${config.label}</span><small>${config.hint}</small>`;
+    modes.appendChild(button);
+  }
+
+  function rebuildMinimap(activeIds) {
+    minimap.replaceChildren();
+    minimapMarks.clear();
+    const docHeight = Math.max(
+      document.documentElement.scrollHeight,
+      document.body.scrollHeight
+    );
+    for (const id of activeIds) {
+      const el = sentenceEls.get(id);
+      if (!el) continue;
+      const mark = document.createElement("button");
+      mark.className = "clarity-minimap__mark";
+      mark.type = "button";
+      mark.style.top = `${Math.min(
+        96,
+        Math.max(1, (el.getBoundingClientRect().top + window.scrollY) / docHeight * 100)
+      )}%`;
+      mark.addEventListener("click", () =>
+        el.scrollIntoView({ block: "center", behavior: "smooth" })
+      );
+      minimap.appendChild(mark);
+      minimapMarks.set(id, mark);
+    }
+  }
+
+  function applyState() {
+    const activeIds = topSentenceIds(items, state);
+    const activeConfig = CLARITY_MODES[state.mode];
+    document.documentElement.style.setProperty(
+      "--clarity-accent",
+      activeConfig.accent
+    );
+
+    for (const [id, el] of sentenceEls) {
+      const active = activeIds.has(id);
+      el.classList.toggle("clarity-highlight", active);
+      el.style.setProperty(
+        "--clarity-strength",
+        active ? String(itemById.get(id).combined.toFixed(2)) : "0"
+      );
+    }
+
+    for (const button of modes.querySelectorAll(".clarity-mode")) {
+      const selected = button.dataset.mode === state.mode;
+      button.classList.toggle("is-active", selected);
+      button.setAttribute("aria-selected", String(selected));
+    }
+
+    panel.querySelector(".clarity-density-value").textContent = `${Math.round(
+      state.ratio * 100
+    )}%`;
+    panel.querySelector(".clarity-count").textContent = `${activeIds.size} passages highlighted`;
+    rebuildMinimap(activeIds);
+  }
+
+  panel.querySelector(".clarity-density").addEventListener("input", (event) => {
+    state.ratio = Number(event.target.value) / 100;
+    applyState();
+  });
+
+  modes.addEventListener("click", (event) => {
+    const button = event.target.closest(".clarity-mode");
+    if (!button) return;
+    state.mode = button.dataset.mode;
+    applyState();
+  });
+
+  panel.querySelector(".clarity-query input").addEventListener("input", (event) => {
+    state.query = event.target.value;
+    applyState();
+  });
+
+  panel.querySelector(".clarity-panel__toggle").addEventListener("click", () => {
+    panel.classList.add("is-collapsed");
+    rail.classList.add("is-visible");
+  });
+
+  rail.addEventListener("click", () => {
+    panel.classList.remove("is-collapsed");
+    rail.classList.remove("is-visible");
+  });
+
+  for (const [id, el] of sentenceEls) {
+    el.addEventListener("mouseenter", () => {
+      const item = itemById.get(id);
+      const related = findRelatedIds(items, item);
+      el.classList.add("clarity-focus");
+      for (const relatedId of related) {
+        sentenceEls.get(relatedId)?.classList.add("clarity-related");
+        minimapMarks.get(relatedId)?.classList.add("clarity-minimap__mark--related");
+      }
+    });
+    el.addEventListener("mouseleave", () => {
+      document
+        .querySelectorAll(".clarity-focus, .clarity-related")
+        .forEach((node) =>
+          node.classList.remove("clarity-focus", "clarity-related")
+        );
+      document
+        .querySelectorAll(".clarity-minimap__mark--related")
+        .forEach((node) =>
+          node.classList.remove("clarity-minimap__mark--related")
+        );
+    });
+  }
+
+  applyState();
+}
+
+// ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
 
@@ -325,7 +591,6 @@ async function run() {
 
   // Pass 3: combined = importance (salience) modulated by clarity, with
   // clear-but-empty filler penalized.
-  let maxCombined = 0;
   items.forEach((it, i) => {
     const clarity = probs[i * 2 + 1];
     const sal = maxSalience > 0 ? it.salience / maxSalience : 0;
@@ -334,23 +599,16 @@ async function run() {
     if (!substantive) combined *= FILLER_PENALTY;
     if (isDefinition(it.sentence)) combined *= DEFINITION_BOOST;
     it.combined = combined;
-    if (combined > maxCombined) maxCombined = combined;
   });
 
-  // Pass 3b: highlight the top fraction of sentences by combined score.
-  const ranked = [...items].sort((a, b) => b.combined - a.combined);
-  const k = Math.min(
-    items.length,
-    Math.max(MIN_HIGHLIGHTS, Math.round(SELECT_RATIO * items.length)),
-    MAX_HIGHLIGHTS
-  );
-  const floor = RELATIVE_FLOOR * maxCombined;
-  for (const it of ranked.slice(0, k)) {
-    if (it.combined < floor) continue;
-    nodePlans[it.planIndex].highlight[it.segIndex] = it.combined;
-  }
+  // Pass 3b: tag every scored sentence so the reading controls can update live.
+  items.forEach((it, id) => {
+    it.id = id;
+    nodePlans[it.planIndex].highlight[it.segIndex] = id;
+  });
 
-  // Pass 4: rebuild only the nodes that got highlights (DOM-safe, no innerHTML).
+  // Pass 4: rebuild scored nodes once (DOM-safe, no innerHTML), then the
+  // assistant toggles highlight classes without reprocessing page text.
   for (const plan of nodePlans) {
     const marks = plan.highlight;
     if (Object.keys(marks).length === 0) continue;
@@ -358,8 +616,10 @@ async function run() {
     plan.segments.forEach((seg, segIndex) => {
       if (marks[segIndex] !== undefined) {
         const span = document.createElement("span");
-        span.className = "clarity-highlight";
-        span.dataset.score = marks[segIndex].toFixed(2);
+        const item = items[marks[segIndex]];
+        span.className = "clarity-sentence";
+        span.dataset.clarityId = String(item.id);
+        span.dataset.score = item.combined.toFixed(2);
         span.textContent = seg.text;
         frag.appendChild(span);
       } else {
@@ -368,6 +628,8 @@ async function run() {
     });
     plan.node.replaceWith(frag);
   }
+
+  createAssistant(items);
 
   console.log(`[Clarity] scored ${items.length} sentences.`);
 }

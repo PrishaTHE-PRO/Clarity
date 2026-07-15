@@ -1,33 +1,278 @@
-.clarity-highlight {
-  background-color: #fff5b0;
-  border-radius: 2px;
-  padding: 1px 0;
+:root {
+  --clarity-accent: #2563eb;
+  --clarity-panel-bg: rgba(255, 255, 255, 0.96);
+  --clarity-panel-border: rgba(15, 23, 42, 0.12);
+  --clarity-text: #111827;
+  --clarity-muted: #6b7280;
+}
+
+.clarity-sentence {
+  border-radius: 3px;
   box-decoration-break: clone;
   -webkit-box-decoration-break: clone;
-  transition: background-color 0.2s ease;
+  transition:
+    background-color 140ms ease,
+    box-shadow 140ms ease,
+    color 140ms ease;
 }
 
-.clarity-highlight:hover {
-  background-color: #ffec85;
+.clarity-highlight {
+  background: color-mix(in srgb, var(--clarity-accent) 13%, transparent);
+  box-shadow:
+    inset 3px 0 0 color-mix(in srgb, var(--clarity-accent) 78%, transparent),
+    0 0 0 1px color-mix(in srgb, var(--clarity-accent) 8%, transparent);
 }
 
-.clarity-highlight:hover::after {
-  content: "★ " attr(data-score);
-  font-size: 11px;
-  color: #92400e;
-  margin-left: 6px;
-  opacity: 0.7;
+.clarity-focus {
+  background: color-mix(in srgb, var(--clarity-accent) 20%, transparent);
+  box-shadow:
+    inset 3px 0 0 var(--clarity-accent),
+    0 0 0 4px color-mix(in srgb, var(--clarity-accent) 12%, transparent);
+}
+
+.clarity-related {
+  background: color-mix(in srgb, var(--clarity-accent) 10%, transparent);
+  box-shadow: inset 3px 0 0 color-mix(in srgb, var(--clarity-accent) 58%, transparent);
+}
+
+.clarity-panel,
+.clarity-panel *,
+.clarity-rail,
+.clarity-minimap,
+.clarity-minimap * {
+  box-sizing: border-box;
   font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif;
+  letter-spacing: 0;
+}
+
+.clarity-panel {
+  position: fixed;
+  z-index: 2147483646;
+  top: 18px;
+  right: 22px;
+  width: min(320px, calc(100vw - 36px));
+  max-height: calc(100vh - 36px);
+  overflow: auto;
+  padding: 14px;
+  color: var(--clarity-text);
+  background: var(--clarity-panel-bg);
+  border: 1px solid var(--clarity-panel-border);
+  border-radius: 8px;
+  box-shadow: 0 20px 50px rgba(15, 23, 42, 0.16);
+  backdrop-filter: blur(16px);
+  transform: translateX(0);
+  transition: transform 180ms ease, opacity 180ms ease;
+}
+
+.clarity-panel.is-collapsed {
+  opacity: 0;
+  pointer-events: none;
+  transform: translateX(calc(100% + 28px));
+}
+
+.clarity-panel__header {
+  display: flex;
+  align-items: flex-start;
+  justify-content: space-between;
+  gap: 12px;
+  margin-bottom: 14px;
+}
+
+.clarity-panel__title {
+  font-size: 15px;
+  font-weight: 700;
+  line-height: 1.2;
+}
+
+.clarity-panel__subtitle {
+  margin-top: 2px;
+  color: var(--clarity-muted);
+  font-size: 12px;
+  line-height: 1.3;
+}
+
+.clarity-panel__toggle,
+.clarity-rail,
+.clarity-mode {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+}
+
+.clarity-panel__toggle {
+  width: 28px;
+  height: 28px;
+  flex: 0 0 28px;
+  border-radius: 6px;
+  color: var(--clarity-muted);
+  background: rgba(15, 23, 42, 0.06);
+  font-size: 18px;
+  line-height: 1;
+}
+
+.clarity-control,
+.clarity-query {
+  display: grid;
+  gap: 8px;
+  margin-bottom: 14px;
+  color: var(--clarity-muted);
+  font-size: 12px;
+}
+
+.clarity-control span,
+.clarity-query span {
+  display: flex;
+  justify-content: space-between;
+  color: var(--clarity-text);
+  font-weight: 650;
+}
+
+.clarity-density {
+  width: 100%;
+  accent-color: var(--clarity-accent);
+}
+
+.clarity-modes {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-bottom: 14px;
+}
+
+.clarity-mode {
+  display: grid;
+  gap: 2px;
+  min-height: 48px;
+  padding: 8px;
+  border: 1px solid rgba(15, 23, 42, 0.1);
+  border-radius: 7px;
+  color: var(--clarity-text);
+  background: rgba(255, 255, 255, 0.72);
+  text-align: left;
+}
+
+.clarity-mode span {
+  overflow: hidden;
+  font-size: 12px;
+  font-weight: 700;
+  line-height: 1.15;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clarity-mode small {
+  overflow: hidden;
+  color: var(--clarity-muted);
+  font-size: 10px;
+  line-height: 1.2;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.clarity-mode.is-active {
+  border-color: color-mix(in srgb, var(--clarity-accent) 45%, transparent);
+  background: color-mix(in srgb, var(--clarity-accent) 10%, white);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--clarity-accent) 24%, transparent);
+}
+
+.clarity-query input {
+  width: 100%;
+  min-height: 34px;
+  padding: 7px 9px;
+  border: 1px solid rgba(15, 23, 42, 0.12);
+  border-radius: 7px;
+  color: var(--clarity-text);
+  background: #fff;
+  font-size: 12px;
+  outline: none;
+}
+
+.clarity-query input:focus {
+  border-color: color-mix(in srgb, var(--clarity-accent) 52%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--clarity-accent) 12%, transparent);
+}
+
+.clarity-count {
+  color: var(--clarity-muted);
+  font-size: 11px;
+}
+
+.clarity-rail {
+  position: fixed;
+  z-index: 2147483646;
+  top: 22px;
+  right: 0;
+  display: none;
+  width: 34px;
+  height: 86px;
+  border-radius: 8px 0 0 8px;
+  color: #fff;
+  background: var(--clarity-accent);
+  font-size: 12px;
+  font-weight: 700;
+  writing-mode: vertical-rl;
+  transform: rotate(180deg);
+}
+
+.clarity-rail.is-visible {
+  display: block;
+}
+
+.clarity-minimap {
+  position: fixed;
+  z-index: 2147483645;
+  top: 124px;
+  right: 8px;
+  width: 6px;
+  height: calc(100vh - 156px);
+  pointer-events: none;
+}
+
+.clarity-minimap__mark {
+  position: absolute;
+  left: 0;
+  width: 6px;
+  height: 18px;
+  padding: 0;
+  border: 0;
+  border-radius: 6px;
+  background: color-mix(in srgb, var(--clarity-accent) 72%, transparent);
+  cursor: pointer;
+  pointer-events: auto;
+}
+
+.clarity-minimap__mark--related {
+  width: 9px;
+  background: var(--clarity-accent);
+  transform: translateX(-3px);
+}
+
+@media (max-width: 640px) {
+  .clarity-panel {
+    top: auto;
+    right: 10px;
+    bottom: 10px;
+    left: 10px;
+    width: auto;
+    max-height: min(72vh, 560px);
+  }
+
+  .clarity-minimap {
+    display: none;
+  }
 }
 
 @media (prefers-color-scheme: dark) {
-  .clarity-highlight {
-    background-color: rgba(253, 224, 71, 0.22);
+  :root {
+    --clarity-panel-bg: rgba(17, 24, 39, 0.94);
+    --clarity-panel-border: rgba(255, 255, 255, 0.13);
+    --clarity-text: #f9fafb;
+    --clarity-muted: #9ca3af;
   }
-  .clarity-highlight:hover {
-    background-color: rgba(253, 224, 71, 0.38);
-  }
-  .clarity-highlight:hover::after {
-    color: #fde68a;
+
+  .clarity-mode,
+  .clarity-query input {
+    background: rgba(31, 41, 55, 0.92);
+    border-color: rgba(255, 255, 255, 0.12);
   }
 }
